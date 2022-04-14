@@ -1,6 +1,6 @@
 # This code is part of Qiskit.
 #
-# (C) Copyright IBM 2021.
+# (C) Copyright IBM 2021, 2022.
 #
 # This code is licensed under the Apache License, Version 2.0. You may
 # obtain a copy of this license in the LICENSE.txt file in the root directory
@@ -20,18 +20,13 @@ from qiskit.algorithms import EigensolverResult, MinimumEigensolverResult
 from qiskit.opflow import PauliSumOp
 from qiskit.opflow.primitive_ops import Z2Symmetries
 
-from qiskit_nature import ListOrDictType
+from qiskit_nature import ListOrDictType, QiskitNatureError
 from qiskit_nature.circuit.library.initial_states.hartree_fock import hartree_fock_bitstring_mapped
-from qiskit_nature.drivers import QMolecule
 from qiskit_nature.drivers.second_quantization import ElectronicStructureDriver
 from qiskit_nature.operators.second_quantization import SecondQuantizedOp
 from qiskit_nature.converters.second_quantization import QubitConverter
-from qiskit_nature.properties.second_quantization.electronic import (
-    ElectronicStructureDriverResult,
-    ParticleNumber,
-)
+from qiskit_nature.properties.second_quantization.electronic import ParticleNumber
 from qiskit_nature.results import EigenstateResult, ElectronicStructureResult
-from qiskit_nature.transformers import BaseTransformer as LegacyBaseTransformer
 from qiskit_nature.transformers.second_quantization import BaseTransformer
 
 from .builders.hopping_ops_builder import _build_qeom_hopping_ops
@@ -39,12 +34,17 @@ from ..base_problem import BaseProblem
 
 
 class ElectronicStructureProblem(BaseProblem):
-    """Electronic Structure Problem"""
+    """The Electronic Structure Problem.
+
+    The attributes `num_particles` and `num_spin_orbitals` are only available _after_ the
+    `second_q_ops()` method has been called! Note, that if you do so, the method will be executed
+    again when the problem is being solved.
+    """
 
     def __init__(
         self,
         driver: ElectronicStructureDriver,
-        transformers: Optional[List[Union[LegacyBaseTransformer, BaseTransformer]]] = None,
+        transformers: Optional[List[BaseTransformer]] = None,
     ):
         """
 
@@ -57,11 +57,21 @@ class ElectronicStructureProblem(BaseProblem):
 
     @property
     def num_particles(self) -> Tuple[int, int]:
+        if self._grouped_property_transformed is None:
+            raise QiskitNatureError(
+                "`num_particles` is only available _after_ `second_q_ops()` has been called! "
+                "Note, that if you run this manually, the method will run again during solving."
+            )
         return self._grouped_property_transformed.get_property("ParticleNumber").num_particles
 
     @property
     def num_spin_orbitals(self) -> int:
         """Returns the number of spin orbitals."""
+        if self._grouped_property_transformed is None:
+            raise QiskitNatureError(
+                "`num_spin_orbitals` is only available _after_ `second_q_ops()` has been called! "
+                "Note, that if you run this manually, the method will run again during solving."
+            )
         return self._grouped_property_transformed.get_property("ParticleNumber").num_spin_orbitals
 
     def second_q_ops(self) -> ListOrDictType[SecondQuantizedOp]:
@@ -78,30 +88,8 @@ class ElectronicStructureProblem(BaseProblem):
         """
         driver_result = self.driver.run()
 
-        if self._legacy_driver:
-            self._molecule_data = cast(QMolecule, driver_result)
-            self._grouped_property = ElectronicStructureDriverResult.from_legacy_driver_result(
-                self._molecule_data
-            )
-
-            if self._legacy_transform:
-                self._molecule_data_transformed = self._transform(self._molecule_data)
-                self._grouped_property_transformed = (
-                    ElectronicStructureDriverResult.from_legacy_driver_result(
-                        self._molecule_data_transformed
-                    )
-                )
-
-            else:
-                if not self.transformers:
-                    # if no transformers are supplied, we can still provide
-                    # `molecule_data_transformed` as a copy of `molecule_data`
-                    self._molecule_data_transformed = self._molecule_data
-                self._grouped_property_transformed = self._transform(self._grouped_property)
-
-        else:
-            self._grouped_property = driver_result
-            self._grouped_property_transformed = self._transform(self._grouped_property)
+        self._grouped_property = driver_result
+        self._grouped_property_transformed = self._transform(self._grouped_property)
 
         second_quantized_ops = self._grouped_property_transformed.second_q_ops()
 
@@ -123,6 +111,8 @@ class ElectronicStructureProblem(BaseProblem):
     ]:
         """Generates the hopping operators and their commutativity information for the specified set
         of excitations.
+
+        This method should can be used after calling `second_q_ops()`.
 
         Args:
             qubit_converter: the `QubitConverter` to use for mapping and symmetry reduction. The
@@ -203,13 +193,10 @@ class ElectronicStructureProblem(BaseProblem):
             particle_number = cast(
                 ParticleNumber, self.grouped_property_transformed.get_property(ParticleNumber)
             )
-            return (
-                np.isclose(
-                    particle_number.num_alpha + particle_number.num_beta,
-                    num_particles_aux,
-                )
-                and np.isclose(0.0, total_angular_momentum_aux)
-            )
+            return np.isclose(
+                particle_number.num_alpha + particle_number.num_beta,
+                num_particles_aux,
+            ) and np.isclose(0.0, total_angular_momentum_aux)
 
         return partial(filter_criterion, self)
 

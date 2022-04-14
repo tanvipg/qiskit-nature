@@ -1,6 +1,6 @@
 # This code is part of Qiskit.
 #
-# (C) Copyright IBM 2020, 2021.
+# (C) Copyright IBM 2020, 2022.
 #
 # This code is licensed under the Apache License, Version 2.0. You may
 # obtain a copy of this license in the LICENSE.txt file in the root directory
@@ -18,7 +18,7 @@ import unittest
 
 from typing import cast
 
-from test import QiskitNatureTestCase, requires_extra_library
+from test import QiskitNatureTestCase
 
 import numpy as np
 
@@ -42,12 +42,13 @@ from qiskit_nature.properties.second_quantization.electronic.integrals import (
     OneBodyElectronicIntegrals,
     TwoBodyElectronicIntegrals,
 )
+import qiskit_nature.optionals as _optionals
 
 
 class TestAdaptVQE(QiskitNatureTestCase):
     """Test Adaptive VQE Ground State Calculation"""
 
-    @requires_extra_library
+    @unittest.skipIf(not _optionals.HAS_PYSCF, "pyscf not available.")
     def setUp(self):
         super().setUp()
 
@@ -110,12 +111,16 @@ class TestAdaptVQE(QiskitNatureTestCase):
         modes = 4
         h_1 = np.eye(modes, dtype=complex)
         h_2 = np.zeros((modes, modes, modes, modes))
-        aux_ops = ElectronicEnergy(
-            [
-                OneBodyElectronicIntegrals(ElectronicBasis.MO, (h_1, None)),
-                TwoBodyElectronicIntegrals(ElectronicBasis.MO, (h_2, None, None, None)),
-            ]
-        ).second_q_ops()
+        aux_ops = list(
+            ElectronicEnergy(
+                [
+                    OneBodyElectronicIntegrals(ElectronicBasis.MO, (h_1, None)),
+                    TwoBodyElectronicIntegrals(ElectronicBasis.MO, (h_2, None, None, None)),
+                ]
+            )
+            .second_q_ops()
+            .values()
+        )
         aux_ops_copy = copy.deepcopy(aux_ops)
 
         _ = calc.solve(self.problem)
@@ -169,7 +174,6 @@ class TestAdaptVQE(QiskitNatureTestCase):
                 # Here, we can create essentially any custom excitation pool.
                 # For testing purposes only, we simply select some hopping operator already
                 # available in the ansatz object.
-                # pylint: disable=no-member
                 custom_excitation_pool = [solver.ansatz.operators[2]]
                 solver.ansatz.operators = custom_excitation_pool
                 return solver
